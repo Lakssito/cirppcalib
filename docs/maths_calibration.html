@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Les maths de la calibration CIR++ — CIRppCalib</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body,{delimiters:[
+          {left:'$$',right:'$$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+  :root{
+    --bg:#0f1419; --card:#171e26; --ink:#e8e6e1; --muted:#9aa5b1;
+    --accent:#5cc8ff; --accent2:#ffd166; --good:#7bd88f; --bad:#ff6b6b;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:17px/1.65 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px 120px}
+  header{padding:90px 0 30px;text-align:center}
+  header h1{font-size:2.3em;margin:0 0 8px;color:var(--accent)}
+  header p{color:var(--muted);margin:0;font-size:1.05em}
+  nav{position:sticky;top:0;background:rgba(15,20,25,.92);backdrop-filter:blur(6px);
+      padding:10px 0;text-align:center;z-index:5;border-bottom:1px solid #232c36}
+  nav a{color:var(--muted);text-decoration:none;margin:0 10px;font-size:.85em}
+  nav a:hover{color:var(--accent)}
+  section{background:var(--card);border:1px solid #232c36;border-radius:14px;
+          padding:34px 38px;margin:34px 0}
+  section h2{margin:0 0 6px;color:var(--accent);font-size:1.45em}
+  section h3{color:var(--accent2);font-size:1.05em;margin:26px 0 6px}
+  .kicker{color:var(--muted);font-size:.8em;text-transform:uppercase;
+          letter-spacing:.14em;margin-bottom:2px}
+  .box{background:#101720;border-left:3px solid var(--accent);border-radius:8px;
+       padding:12px 18px;margin:16px 0}
+  .warn{border-left-color:var(--bad)}
+  .ok{border-left-color:var(--good)}
+  .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
+  code{font-family:var(--mono);font-size:.85em;background:#101720;
+       padding:2px 6px;border-radius:5px;color:var(--accent2)}
+  table{border-collapse:collapse;margin:14px 0;width:100%}
+  td,th{border:1px solid #2a3542;padding:7px 12px;font-size:.92em;text-align:left}
+  th{color:var(--accent);background:#101720}
+  .muted{color:var(--muted)}
+  .num{color:var(--accent2);font-family:var(--mono);font-size:.92em}
+</style>
+</head>
+<body>
+<header>
+  <h1>Les maths de la calibration CIR++</h1>
+  <p>CIRppCalib — SOFR, historique 2018→2026 + quotes du jour + scénarios utilisateur</p>
+</header>
+<nav>
+  <a href="#modele">Modèle</a><a href="#fermees">Formules fermées</a>
+  <a href="#mle">MLE exact</a><a href="#bootstrap">Bootstrap</a>
+  <a href="#phi">phi(t)</a><a href="#verif">Vérification</a>
+  <a href="#scenario">Scénario</a><a href="#jensen">Jensen</a>
+</nav>
+<div class="wrap">
+
+<section id="modele">
+  <div class="kicker">1 — Le modèle</div>
+  <h2>CIR++ : un facteur CIR + un décalage déterministe</h2>
+  <p>Le short rate est décomposé en deux morceaux (Brigo &amp; Mercurio, ch.&nbsp;3.9) :</p>
+  $$ r(t) = x(t) + \varphi(t), \qquad
+     dx(t) = \kappa\,(\theta - x(t))\,dt + \sigma\sqrt{x(t)}\,dW(t), \quad x(0)=x_0 $$
+  <p>La division du travail est le cœur de toute la calibration :</p>
+  <table>
+    <tr><th>Objet</th><th>Rôle</th><th>Calibré sur</th></tr>
+    <tr><td>\(\kappa,\theta,\sigma\)</td><td>la <b>dynamique</b> : vitesse de retour,
+        niveau, volatilité \(\propto\sqrt{x}\)</td><td>l'historique SOFR (MLE exact)</td></tr>
+    <tr><td>\(x_0\)</td><td>le point de départ du facteur</td><td>fixing spot O/N du jour</td></tr>
+    <tr><td>\(\varphi(t)\)</td><td>le <b>fit exact</b> de la structure par terme
+        initiale</td><td>la courbe bootstrappée (ou la courbe scénario)</td></tr>
+  </table>
+  <p class="muted">Le CIR seul ne peut pas repricer une courbe arbitraire (3 paramètres,
+  une infinité de maturités). \(\varphi\) absorbe l'écart, maturité par maturité.</p>
+</section>
+
+<section id="fermees">
+  <div class="kicker">2 — Formules fermées</div>
+  <h2>Le zéro-coupon CIR et son forward</h2>
+  <p>Le CIR est affine : le prix du ZCB est exponentiel-affine en \(x\).
+     Avec \(h=\sqrt{\kappa^2+2\sigma^2}\) :</p>
+  $$ P^{\mathrm{CIR}}(0,T) = A(T)\,e^{-B(T)\,x_0} $$
+  $$ B(T)=\frac{2\,(e^{hT}-1)}{2h+(\kappa+h)(e^{hT}-1)},\qquad
+     A(T)=\left[\frac{2h\,e^{(\kappa+h)T/2}}{2h+(\kappa+h)(e^{hT}-1)}\right]^{2\kappa\theta/\sigma^2} $$
+  <p>\(A\) et \(B\) résolvent les ODE de Riccati
+     \(B'=1-\kappa B-\tfrac12\sigma^2B^2\), \((\ln A)'=-\kappa\theta B\)
+     — c'est exactement ce que vérifient les tests (intégration numérique
+     <code>solve_ivp</code> vs formules). Le forward instantané s'en déduit
+     (B&amp;M eq. 3.77), avec \(D(t)=2h+(\kappa+h)(e^{ht}-1)\) :</p>
+  $$ f^{\mathrm{CIR}}(0,t) = \frac{2\kappa\theta\,(e^{ht}-1)}{D(t)}
+     + x_0\,\frac{4h^2\,e^{ht}}{D(t)^2}
+     \;\;\xrightarrow[t\to0]{}\;x_0 $$
+  <div class="box">Numérique : \(A\) se calcule en <b>log</b> (sinon overflow à 30Y),
+  \(e^{hT}-1\) via <code>expm1</code>.</div>
+  <h3>Loi stationnaire (pour le diagnostic)</h3>
+  $$ x(\infty) \sim \Gamma\!\left(\text{shape}=\tfrac{2\kappa\theta}{\sigma^2},\;
+     \text{scale}=\tfrac{\sigma^2}{2\kappa}\right),\quad
+     \mathbb{E}=\theta,\;\; \mathrm{Var}=\tfrac{\sigma^2\theta}{2\kappa} $$
+</section>
+
+<section id="mle">
+  <div class="kicker">3 — Étape 1</div>
+  <h2>MLE exact sur l'historique : la transition <i>chi-2 non centrale</i></h2>
+  <p>Le CIR a une densité de transition <b>connue en forme fermée</b> — pas besoin
+     d'approximation d'Euler. Sachant \(x_i\), sur un pas \(\Delta t_i\)
+     (jours calendaires réels / 365, week-ends = 3 jours) :</p>
+  $$ c_i=\frac{2\kappa}{\sigma^2\left(1-e^{-\kappa\Delta t_i}\right)},\qquad
+     d=\frac{4\kappa\theta}{\sigma^2},\qquad
+     \lambda_i = 2\,c_i\,x_i\,e^{-\kappa\Delta t_i} $$
+  $$ 2\,c_i\,x_{i+1}\;\Big|\;x_i \;\sim\; \chi^2_{\,d}(\lambda_i)
+     \quad\text{(chi-2 non centrale, \texttt{scipy.stats.ncx2})} $$
+  <p>La log-vraisemblance somme les transitions, <b>avec le jacobien</b> du
+     changement de variable \(x\mapsto 2cx\) :</p>
+  $$ \mathcal{L}(\kappa,\theta,\sigma)=\sum_{i}\Big[
+     \ln(2c_i) + \ln f_{\chi^2_d(\lambda_i)}\!\big(2c_i x_{i+1}\big)\Big] $$
+  <h3>Initialisation : AR(1) / pseudo-MLE gaussien</h3>
+  <p>La discrétisation exacte de la moyenne donne un AR(1) :
+     \(x_{i+1} = a + b\,x_i + \varepsilon_i\) avec
+     \(b=e^{-\kappa\Delta t}\), \(a=\theta(1-b)\),
+     \(\mathrm{Var}[\varepsilon_i]\approx\sigma^2 x_i\Delta t_i\). Une OLS donne :</p>
+  $$ \kappa_0=-\frac{\ln b}{\overline{\Delta t}},\qquad
+     \theta_0=\frac{a}{1-b},\qquad
+     \sigma_0^2=\frac1n\sum_i\frac{\varepsilon_i^2}{x_i\,\Delta t_i} $$
+  <h3>Optimisation et contraintes</h3>
+  <p>Nelder-Mead sur \((\ln\kappa,\ln\theta,\ln\sigma)\) — la positivité est
+     structurelle, pas de contrainte explicite. Le floor
+     \(x\ge\varepsilon=10^{-4}\) est appliqué <i>avant</i> tout (période ZIRP
+     2020-2022, \(\sqrt{x}\) au dénominateur). Puis on vérifie :</p>
+  <div class="box ok">Condition de Feller : \(2\kappa\theta\ge\sigma^2\)
+    ⟹ \(x\) ne touche jamais 0.
+    Sur SOFR 2018→2026 : <span class="num">2κθ = 1.760·10⁻²  ≥  σ² = 1.696·10⁻²</span>
+    — satisfaite <i>de justesse</i> (la ZIRP gonfle σ relatif).</div>
+  <table>
+    <tr><th>Résultat (2091 obs.)</th><th>κ</th><th>θ</th><th>σ</th><th>x₀</th></tr>
+    <tr><td>MLE exact</td><td class="num">0.247161</td><td class="num">0.035598</td>
+        <td class="num">0.130239</td><td class="num">0.0362 (spot)</td></tr>
+  </table>
+</section>
+
+<section id="bootstrap">
+  <div class="kicker">4 — Étape 2a</div>
+  <h2>Bootstrap de la courbe : P<sub>market</sub>(0,T) depuis les quotes</h2>
+  <p>Single curve SOFR. Le par swap rate d'un OIS à jambe fixe annuelle
+     (accruals \(\tau_i\) en ACT/360, discount en \(t\) ACT/365F) :</p>
+  $$ S = \frac{1-P(0,T_N)}{\sum_{i=1}^{N}\tau_i\,P(0,t_i)}
+     \qquad\text{(ténors monétaires : un seul terme } \Leftrightarrow
+     P=\tfrac{1}{1+S\tau}\text{)} $$
+  <p>Ancre overnight : \(P(0,\text{1j})=\dfrac{1}{1+\text{spot}/360}\).
+     Interpolation <b>log-linéaire sur les DF</b> (⟹ \(\ln P\) linéaire par
+     morceaux ⟹ forwards constants par morceaux), extrapolation flat-forward.</p>
+  <p>Résolution séquentielle par ténor croissant : pour chaque pilier, une
+     racine 1D (Brent, \(x_{tol}=10^{-16}\)) sur le DF du pilier, les paiements
+     intermédiaires (ex. le flux 4Y du swap 5Y) étant interpolés entre le
+     dernier pilier connu et le pilier candidat :</p>
+  $$ g(P_{T_N}) = S^{\text{quote}}\cdot\underbrace{\textstyle\sum_i \tau_i
+     P(0,t_i)}_{\text{dépend de }P_{T_N}\text{ par interpolation}}
+     -\;\big(1-P_{T_N}\big) \;=\; 0 $$
+</section>
+
+<section id="phi">
+  <div class="kicker">5 — Étape 2b</div>
+  <h2>φ(t) : la double représentation (le point clé)</h2>
+  <p>Définition : \(\varphi(t) = f^{\mathrm{mkt}}(0,t)-f^{\mathrm{CIR}}(0,t)\).
+     Le module en maintient <b>deux représentations cohérentes</b> :</p>
+  <h3>(a) φ ponctuel — pour ta simulation</h3>
+  <p>\(f^{\mathrm{mkt}}\) = dérivée numérique de \(-\ln P^{\mathrm{mkt}}(0,t)\)
+     sur grille journalière, lissée par noyau gaussien (σ = 10 jours) ;
+     \(f^{\mathrm{CIR}}\) analytique. C'est la fonction \(\varphi(t)\)
+     évaluable que tu branches dans <code>r(t)=x(t)+φ(t)</code>.</p>
+  <h3>(b) L'intégrale de φ — exacte, en forme fermée</h3>
+  <p>Par définition du forward, \(\int_0^t f(0,s)ds = -\ln P(0,t)\). Donc :</p>
+  $$ \Phi(t):=\int_0^t\varphi(s)\,ds
+     \;=\; \ln P^{\mathrm{CIR}}(0,t)-\ln P^{\mathrm{mkt}}(0,t) $$
+  <p>d'où le ZCB CIR++, <b>exact par construction</b> :</p>
+  $$ P^{\mathrm{CIR++}}(0,T) = e^{-\Phi(T)}\,P^{\mathrm{CIR}}(0,T)
+     = P^{\mathrm{mkt}}(0,T) $$
+  <div class="box warn">Intégrer numériquement le φ lissé donnerait ~10⁻⁴
+  d'erreur ; l'identité fermée donne la précision machine. C'est ce qui rend le
+  seuil de 10⁻¹⁰ atteignable — et c'est le seul endroit où (a) et (b)
+  diffèrent : le lissage est cosmétique pour (a), jamais utilisé dans (b).</div>
+</section>
+
+<section id="verif">
+  <div class="kicker">6 — Vérification</div>
+  <h2>Le run échoue si le repricing échoue</h2>
+  <table>
+    <tr><th>Check</th><th>Seuil</th><th>Obtenu</th></tr>
+    <tr><td>\(|P^{\mathrm{CIR++}}(0,T)-P^{\mathrm{mkt}}(0,T)|\) aux piliers</td>
+        <td>&lt; 10⁻¹⁰</td><td class="num">0.0</td></tr>
+    <tr><td>par swaps recalculés avec les DF du modèle vs quotes</td>
+        <td>&lt; 0.1 bp</td><td class="num">max 5.7·10⁻¹² bp</td></tr>
+  </table>
+  <p class="muted">+ diagnostics : histogramme SOFR vs Gamma stationnaire, QQ-plot des
+  incréments standardisés
+  \(z_i=\frac{x_{i+1}-x_i-\kappa(\theta-x_i)\Delta t_i}{\sigma\sqrt{x_i\Delta t_i}}\)
+  vs \(\mathcal N(0,1)\) — queues épaisses attendues (sauts FOMC).</p>
+</section>
+
+<section id="scenario">
+  <div class="kicker">7 — Mode scénario</div>
+  <h2>Calibrer sur les vues forward de l'utilisateur</h2>
+  <p>Chaque vue « ténor \(N\) vu à l'horizon \(h\) » est un instrument
+     <b>forward-starting</b>, déterministe dans la courbe :</p>
+  $$ S(h,h{+}N)=\frac{P(0,h)-P(0,T_N)}{\sum_i \tau_i P(0,t_i)},\qquad
+     \mathrm{ON}(h)=\Big(\tfrac{P(0,h)}{P(0,h{+}\mathrm{1j})}-1\Big)\cdot360 $$
+  <p>Inconnues : les log-DF aux nœuds (horizons + maturités finales).
+     Moindres carrés pondérés (résidus en bp) :</p>
+  $$ \min_{\{\ln P_k\}}\;
+     \underbrace{\sum_{\text{vues}} w_{\text{ténor}}\,\big(S^{\text{courbe}}-S^{\text{vue}}\big)^2}_{\text{vues, divergences arbitrées par }w}
+     +\underbrace{w_{\text{base}}\sum_{h=0}(\cdot)^2}_{\text{quotes du jour}}
+     +\underbrace{\lambda\sum_k\frac{(\Delta f_k)^2}{\Delta t_k^{\text{mid}}}}_{\text{lissage Sobolev}} $$
+  <p>Puis \(\varphi\) absorbe <b>exactement</b> la courbe scénario (même identité
+     qu'au §5) ; \(\kappa,\theta,\sigma\) restent historiques, \(x_0\) = spot.</p>
+  <div class="box">La pénalité divise par \(\Delta t^{\text{mid}}\) : un spike de
+  forward sur un segment d'1 jour coûte ~365× plus qu'une inflexion annuelle.
+  Sans ça, le solveur « fitte » les vues O/N par des creux d'un jour aux nœuds,
+  invisibles dans la RMSE et catastrophiques pour les forwards simulés.</div>
+  <p>Vues cohérentes ⟹ repricées &lt; 0.5 bp. Vues divergentes ⟹ compromis
+     pondéré : poids 5 sur le 10Y ⟹ forwards 10Y fittés à ~2 bp, l'erreur se
+     reporte sur les ténors en conflit.</p>
+</section>
+
+<section id="jensen">
+  <div class="kicker">8 — Pourquoi PAS l'autre formulation</div>
+  <h2>L'argument de Jensen (le piège évité)</h2>
+  <p>L'idée naïve : garder \(\varphi\) sur la courbe de marché et recalibrer
+     \((\kappa,\theta)\) pour que les taux le long du chemin espéré
+     \(\bar x(h)=\mathbb E[x(h)]=\theta+(x_0-\theta)e^{-\kappa h}\)
+     collent aux vues. Elle est <b>structurellement impossible</b> pour des vues
+     baissières. En effet \(P(0,t)=\mathbb E\big[e^{-\int_0^t r}\big]\) et la
+     convexité de l'exponentielle donnent :</p>
+  $$ f(0,t) \;\le\; \mathbb{E}[r(t)]
+     \qquad\Longrightarrow\qquad
+     \underbrace{\bar x(h)-f^{\mathrm{CIR}}(0,h)}_{\text{correction de convexité}}\;\ge\;0 $$
+  <p>Le taux impliqué sur le chemin espéré vaut
+     \(f^{\mathrm{mkt}}(0,h) + \big(\bar x(h)-f^{\mathrm{CIR}}(0,h)\big)\) :
+     il est <b>toujours au-dessus du forward de marché</b>, quels que soient
+     \(\kappa,\theta\). Une vue de cuts sous les forwards est inatteignable —
+     constaté empiriquement : \(\kappa\to20\), \(\theta\to0\), Feller violée,
+     RMSE ~30 bp.</p>
+  <div class="box ok">Conclusion : face à des vues <i>de forwards</i>, l'inconnue
+  est la <b>courbe</b> (donc φ), pas la dynamique. C'est la formulation retenue
+  au §7.</div>
+</section>
+
+<section>
+  <div class="kicker">9 — Récapitulatif</div>
+  <h2>Le pipeline en une ligne de maths chacune</h2>
+  <table>
+    <tr><th></th><th>Quoi</th><th>Comment</th></tr>
+    <tr><td>1</td><td>\(\kappa,\theta,\sigma\)</td>
+        <td>\(\max \sum_i \ln\big[2c_i f_{\chi^2}(2c_ix_{i+1})\big]\) — MLE exact ncx2</td></tr>
+    <tr><td>2</td><td>\(x_0\)</td><td>fixing spot O/N</td></tr>
+    <tr><td>3</td><td>\(P^{\mathrm{mkt}}(0,T)\)</td>
+        <td>bootstrap Brent, \(S=(1-P_N)/\sum\tau_iP_i\), log-linéaire</td></tr>
+    <tr><td>3'</td><td>courbe scénario</td>
+        <td>WLS sur instruments forward-starting + lissage Sobolev</td></tr>
+    <tr><td>4</td><td>\(\varphi(t)\)</td>
+        <td>\(f^{\mathrm{mkt}}-f^{\mathrm{CIR}}\) (ponctuel lissé) ;
+            \(\Phi=\ln P^{\mathrm{CIR}}-\ln P^{\mathrm{mkt}}\) (exact)</td></tr>
+    <tr><td>5</td><td>preuve</td>
+        <td>\(e^{-\Phi(T)}P^{\mathrm{CIR}}(0,T)=P^{\mathrm{mkt}}(0,T)\) à 10⁻¹⁶</td></tr>
+  </table>
+  <p class="muted">Sortie : <code>output/cirpp_model.json</code> —
+  (κ, θ, σ, x₀) + piliers de la courbe = tout ce qu'il faut pour reconstruire
+  φ et simuler r(t) = x(t) + φ(t) ailleurs.</p>
+</section>
+
+</div>
+</body>
+</html>
