@@ -53,6 +53,7 @@
 </header>
 <nav>
   <a href="#modele">Modèle</a><a href="#fermees">Formules fermées</a>
+  <a href="#intuition">Intuition</a>
   <a href="#mle">MLE exact</a><a href="#bootstrap">Bootstrap</a>
   <a href="#phi">phi(t)</a><a href="#verif">Vérification</a>
   <a href="#scenario">Scénario</a><a href="#jensen">Jensen</a>
@@ -102,8 +103,38 @@
      \mathbb{E}=\theta,\;\; \mathrm{Var}=\tfrac{\sigma^2\theta}{2\kappa} $$
 </section>
 
+<section id="intuition">
+  <div class="kicker">3 — Intuition</div>
+  <h2>C'est quoi, une densité de transition ?</h2>
+  <p>L'EDS \(dx=\kappa(\theta-x)dt+\sigma\sqrt{x}\,dW\) n'est pas une formule
+     donnant \(x(t)\) : c'est une <b>règle de tirage</b>. Partant de \(x\)
+     aujourd'hui, la valeur dans \(\Delta t\) est une variable aléatoire. Sa
+     densité \(p(y\,|\,x,\Delta t)\) — « quelle est la loi de demain sachant
+     aujourd'hui » — s'appelle la <b>densité de transition</b>.</p>
+  <p>Exemple que tout le monde connaît sans le nom : pour le brownien
+     \(dx=\sigma dW\), c'est une gaussienne,
+     \(x(t{+}\Delta t)\,|\,x(t) \sim \mathcal N(x,\sigma^2\Delta t)\).
+     Pour le CIR, la gaussienne ne convient pas : près de zéro le bruit
+     \(\sigma\sqrt{x}\) s'éteint et la loi devient asymétrique (tassée contre
+     0, étalée à droite). Sa forme exacte est une chi-2 non centrale
+     redimensionnée — l'un des rares processus où on la connaît en fermé.</p>
+  <p>Le lien avec la calibration : le CIR est markovien, donc la probabilité
+     d'avoir observé la trajectoire historique \(x_1,\dots,x_n\) est le
+     <b>produit des transitions</b> :</p>
+  $$ L(\kappa,\theta,\sigma)=\prod_{i=1}^{n-1} p\big(x_{i+1}\,\big|\,x_i,\Delta t_i\big) $$
+  <p>Le maximum de vraisemblance choisit les paramètres qui rendent
+     l'historique réellement observé <i>le plus probable possible</i>. Chaque
+     observation « note » les paramètres candidats : un \(\sigma\) trop petit
+     est massacré par les jours de FOMC, un \(\sigma\) trop grand gaspille de
+     la probabilité les jours calmes ; le MLE est le compromis optimal.</p>
+  <div class="box">Ordre de grandeur : avec \(x=3.66\%\), \(\sigma=0.13\),
+  \(\Delta t=1/365\), la transition sur un jour est quasi centrée sur
+  \(3.66\%\) (rappel vers \(\theta\) ≈ 0.007 bp/jour) avec un écart-type
+  \(\sigma\sqrt{x\Delta t}\approx 13\) bp.</div>
+</section>
+
 <section id="mle">
-  <div class="kicker">3 — Étape 1</div>
+  <div class="kicker">4 — Étape 1</div>
   <h2>MLE exact sur l'historique : la transition <i>chi-2 non centrale</i></h2>
   <p>Le CIR a une densité de transition <b>connue en forme fermée</b> — pas besoin
      d'approximation d'Euler. Sachant \(x_i\), sur un pas \(\Delta t_i\)
