@@ -29,8 +29,10 @@ from .plots import (
     plot_discount_factors,
     plot_historical_diagnostics,
     plot_phi,
+    plot_scenario_fit,
     plot_zero_rates,
 )
+from .scenario import fit_scenario_curve, load_scenario
 
 SEP = "=" * 74
 
@@ -49,6 +51,16 @@ def main(argv: list[str] | None = None) -> None:
                     help="écart-type (en jours) du lissage gaussien du forward "
                          "marché dans phi(t) ponctuel ; ~0 = forward brut "
                          "constant par morceaux")
+    ap.add_argument("--scenario", default=None,
+                    help="fichier CSV de scénario forward utilisateur "
+                         "(cf. scenario_example.csv) : la courbe (donc phi) "
+                         "est recalibrée sur les vues forward, pondérées par "
+                         "ténor")
+    ap.add_argument("--base-weight", type=float, default=50.0,
+                    help="poids des quotes h=0 dans le fit scénario")
+    ap.add_argument("--smooth-lambda", type=float, default=0.05,
+                    help="pénalité de lissage des forwards dans le fit "
+                         "scénario")
     ap.add_argument("--out-dir", default="output")
     args = ap.parse_args(argv)
 
@@ -97,6 +109,24 @@ def main(argv: list[str] | None = None) -> None:
         print("  *** ATTENTION : condition de Feller VIOLEE — le processus "
               "CIR peut toucher 0. ***")
 
+    # ---- scénario utilisateur (optionnel) --------------------------------
+    scenario = None
+    if args.scenario:
+        scenario = load_scenario(args.scenario)
+        if scenario.base_quotes:
+            # la ligne h=0 du scénario remplace les quotes de marché
+            base = dict(scenario.base_quotes)
+            scen_spot = base.pop(0.0, None)
+            if scen_spot is not None:
+                spot = scen_spot
+                fit.params.x0 = spot
+            swaps = base
+            print(f"\nScénario : ligne h=0 trouvée -> courbe initiale prise "
+                  f"dans {args.scenario}")
+        else:
+            print(f"\nScénario : pas de ligne h=0 -> courbe initiale prise "
+                  f"dans {args.swaps_file}")
+
     # ---- étape 2 : bootstrap + phi ---------------------------------------
     print("\n" + SEP)
     print("ETAPE 2 — Bootstrap de la courbe et fit exact de phi(t)")
@@ -110,7 +140,31 @@ def main(argv: list[str] | None = None) -> None:
     }, index=labels)
     print(df_table.to_string(float_format=lambda v: f"{v:.10f}"))
 
-    model = build_cirpp_model(fit.params, curve, t_max=max(swaps) + 1.0,
+    # ---- étape 2bis : fit de la courbe sur le scénario -------------------
+    if scenario is not None:
+        print("\n" + SEP)
+        print("ETAPE 2bis — Fit de la courbe (donc de phi) sur le scénario "
+              "forward utilisateur")
+        print(SEP)
+        scen_fit = fit_scenario_curve(scenario, swaps, spot, curve, val_date,
+                                      base_weight=args.base_weight,
+                                      smooth_lambda=args.smooth_lambda)
+        curve = scen_fit.curve
+        print("Les vues sont traitées comme instruments forward-starting sur "
+              "la courbe ;\nkappa/theta/sigma restent ceux de la calibration "
+              "historique, x0 = spot.\n")
+        print(scen_fit.table.to_string(
+            index=False, float_format=lambda v: f"{v:.4f}"))
+        print(f"\nRMSE pondérée sur les vues   : {scen_fit.rmse_views_bp:.2f} bp")
+        print(f"Écart max sur les quotes h=0 : {scen_fit.max_base_err_bp:.4f} bp "
+              f"(poids base {args.base_weight:g})")
+        print(f"convergence : {scen_fit.converged}")
+        if scen_fit.rmse_views_bp > 1.0:
+            print("NB : RMSE > 1 bp -> vues mutuellement divergentes, le fit "
+                  "est le compromis pondéré.")
+
+    model = build_cirpp_model(fit.params, curve,
+                              t_max=float(curve.times[-1]) + 1.0,
                               smooth_days=args.smooth_days)
     print(f"\nphi(0) = {float(model.phi(0.0)) * 1e4:.1f} bp ; "
           f"r(0) = x0 + phi(0) = {model.short_rate_0() * 100:.4f}% "
@@ -129,6 +183,11 @@ def main(argv: list[str] | None = None) -> None:
           f"(seuil 1e-10) -> {'OK' if zcb_ok else 'ECHEC'}")
     print(f"Par swap rates   : max err = {errs['swap_err_bp'].max():.3e} bp "
           f"(seuil 0.1 bp) -> {'OK' if swap_ok else 'ECHEC'}")
+    if scenario is not None and not swap_ok:
+        print("NB : en mode scénario, l'écart aux quotes h=0 est le compromis "
+              "pondéré vues/quotes,\npas un échec de calibration (le modèle "
+              "reprice EXACTEMENT la courbe scénario).")
+        swap_ok = True
     if not (zcb_ok and swap_ok):
         raise RuntimeError("Echec du repricing — calibration invalide.")
 
@@ -147,6 +206,9 @@ def main(argv: list[str] | None = None) -> None:
         "historical_diagnostics.png":
             lambda path: plot_historical_diagnostics(sofr, model, path),
     }
+    if scenario is not None:
+        plots["scenario_fit.png"] = lambda path: plot_scenario_fit(
+            curve, scenario, val_date, path)
     for name, fn in plots.items():
         path = os.path.join(args.out_dir, name)
         fn(path)

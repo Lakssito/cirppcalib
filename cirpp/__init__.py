@@ -14,6 +14,14 @@ from .calibration import (
     load_swap_rates,
     verify_repricing,
 )
+from .scenario import (
+    Scenario,
+    ScenarioFitResult,
+    fit_scenario_curve,
+    forward_par_rate,
+    load_scenario,
+    scenario_schedule,
+)
 from .model import (
     CIRParams,
     CIRPPModel,
@@ -31,4 +39,6 @@ __all__ = [
     "cir_A", "cir_B", "cir_forward", "cir_stationary_dist", "cir_zcb_price",
     "load_sofr", "load_swap_rates", "fit_cir_mle", "bootstrap_curve",
     "build_cirpp_model", "verify_repricing",
+    "Scenario", "ScenarioFitResult", "load_scenario", "fit_scenario_curve",
+    "forward_par_rate", "scenario_schedule",
 ]

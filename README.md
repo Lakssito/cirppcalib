@@ -309,7 +309,8 @@ exception, la calibration est invalide.
                         # PhiFunction, CIRPPModel, loi stationnaire
       calibration.py    # chargement données, AR(1), MLE ncx2, échéanciers,
                         # bootstrap brentq, verify_repricing
-      plots.py          # les 4 graphiques
+      scenario.py       # calibration sur scénario forward utilisateur (§9)
+      plots.py          # les 4 graphiques + scenario_fit
       main.py           # pipeline complet (CLI)
     tests/
       test_model.py     # limites en 0 ; A,B vs intégration numérique des ODE
@@ -363,3 +364,70 @@ Options CLI : --eps 1e-4, --valuation-date YYYY-MM-DD (défaut : aujourd'hui),
   au dénominateur de la vraisemblance).
 - brentq avec xtol par défaut ne donne pas la précision machine sur les DF :
   serrer xtol=1e-16, rtol=1e-15.
+
+---
+
+## 9. Mode scénario — calibration sur les vues forward de l'utilisateur
+
+Activé par `--scenario fichier.csv` (cf. `scenario_example.csv`). L'utilisateur
+fournit, pour chaque ténor (ON, 1Y, ..., 30Y) et chaque horizon h (6M, 1Y,
+2Y, ...), sa vision du niveau forward du taux, plus des poids par ténor :
+
+    horizon,ON,1Y,2Y,5Y,10Y,30Y
+    0,3.62,3.908,3.961,4.025,4.228,4.483
+    6M,3.45,3.75,3.85,4.00,4.25,4.50
+    1Y,3.30,3.60,3.75,3.95,4.28,4.52
+    weight,1,1,1,1,5,1
+
+La ligne `0` (optionnelle) remplace `swapsofrrates.txt` comme courbe initiale ;
+cellules vides = vue non contrainte ; lignes d'horizon dupliquées autorisées
+(scénarios divergents superposés).
+
+### 9.1 Formulation (et pourquoi celle-là)
+
+Les vues sont traitées comme des instruments FORWARD-STARTING sur la courbe :
+
+    swap NY vu en h : S(h) = (P(0,h) - P(0,T_N)) / sum_i tau_i P(0,t_i)
+                      (échéancier annuel ACT/360 démarrant en h)
+    ON vu en h      : (P(0,h)/P(0,h+1j) - 1) * 360   (taux simple 1 jour)
+
+et la calibration ajuste les log-DF de la courbe aux nœuds (horizons +
+maturités finales, fusionnés au jour près, interpolation log-linéaire) par
+moindres carrés pondérés (scipy least_squares, résidus en bp) :
+
+    residus = sqrt(w_tenor) · (S_courbe - S_vue)·1e4          (vues, h > 0)
+            + sqrt(base_weight) · (idem quotes h=0)           (défaut 50)
+            + sqrt(lambda / delta_t_mid) · saut_de_forward·1e4 (lissage)
+
+Le CIR++ final = paramètres HISTORIQUES (kappa, theta, sigma du MLE, x0 =
+spot) + phi recalé EXACTEMENT sur la courbe scénario (identité du §4.2). Les
+vues cohérentes sont repricées à < 0.5 bp ; les vues divergentes donnent le
+compromis pondéré (un poids 5 sur le 10Y colle les forwards 10Y au détriment
+des ténors en conflit) ; la RMSE pondérée et le tableau vue/fit/erreur sont
+affichés, plus `scenario_fit.png`.
+
+NE PAS faire à la place : recalibrer (kappa, theta) pour que les taux le long
+du chemin espéré E[x(h)] = theta + (x0-theta)e^{-kappa h} collent aux vues, en
+gardant phi sur la courbe de marché. Par Jensen, f(0,t) <= E[r(t)] : le taux
+impliqué sur le chemin espéré est structurellement AU-DESSUS du forward absorbé
+par phi, donc toute vue sous les forwards de marché est inatteignable —
+l'optimisation dégénère (kappa -> 20, theta -> 0, Feller violée, RMSE ~30 bp,
+constaté empiriquement). Face à des vues de forwards, l'inconnue est la
+courbe (donc phi), pas la dynamique.
+
+### 9.2 Pièges spécifiques
+
+- Pénalité de lissage NON pondérée par la longueur des segments : le solveur
+  fitte les vues ON par des creux d'un jour aux nœuds (spikes invisibles dans
+  la RMSE, catastrophiques pour les forwards). D'où le facteur
+  1/sqrt(delta_t_mid) (Sobolev discret) qui rend un spike d'1 jour ~sqrt(365)
+  fois plus coûteux qu'une inflexion annuelle.
+- En mode scénario, l'écart aux quotes h=0 peut dépasser 0.1 bp si les vues
+  les contredisent : c'est le compromis pondéré (piloté par --base-weight),
+  pas un échec — le seuil dur ne s'applique qu'au repricing de la courbe
+  scénario elle-même (toujours précision machine).
+- Bornes sur les log-DF dans least_squares : [-20, 0.5].
+
+CLI : --scenario, --base-weight 50, --smooth-lambda 0.05.
+API : `load_scenario`, `fit_scenario_curve`, `forward_par_rate`,
+`scenario_schedule` (exportés par `cirpp`).
